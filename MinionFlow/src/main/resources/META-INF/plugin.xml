@@ -1,0 +1,50 @@
+<idea-plugin>
+    <id>io.microtask.microtask-plugin</id>
+
+    <name>MicroTask</name>
+
+    <vendor url="https://github.com/solodep/IntelliJ-plugin">MicroTask</vendor>
+
+    <resource-bundle>messages.MyMessageBundle</resource-bundle>
+
+    <description><![CDATA[
+        Плагин для создания и запуска задач на платформе MicroTask.<br>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+    <depends>com.intellij.modules.json</depends>
+    <depends>org.jetbrains.idea.maven</depends>
+    <!-- Kotlin язык используется для разработки плагина, но Kotlin-плагин IDE нам не нужен.
+         Иначе IDEA может пометить наш плагин как incompatible в K2 mode. -->
+
+    <extensions defaultExtensionNs="com.intellij">
+        <newProjectWizard.generator implementation="io.microtask.microtaskplugin.wizard.MicroTaskProjectGenerator"/>
+        <toolWindow id="MicroTask"
+                    secondary="false"
+                    anchor="right"
+                    factoryClass="io.microtask.microtaskplugin.ui.MicroTaskToolWindowFactory"/>
+
+        <applicationService serviceImplementation="io.microtask.microtaskplugin.settings.MicroTaskSettingsService"/>
+        <applicationService serviceImplementation="io.microtask.microtaskplugin.api.MicroTaskApiClient"/>
+        <applicationConfigurable instance="io.microtask.microtaskplugin.settings.MicroTaskSettingsConfigurable"
+                                 displayName="MicroTask"/>
+
+        <notificationGroup id="MicroTask"
+                           displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <group id="MicroTask.Actions" text="MicroTask" description="MicroTask actions" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="MicroTask.OpenToolWindow"
+                    class="io.microtask.microtaskplugin.actions.OpenToolWindowAction"
+                    text="Open Tool Window"
+                    description="Open MicroTask tool window"/>
+            <action id="MicroTask.BuildJar"
+                    class="io.microtask.microtaskplugin.actions.BuildJarAction"
+                    text="MicroTask: Build artifact"
+                    description="Build project artifact with Gradle or Maven"/>
+        </group>
+    </actions>
+</idea-plugin>
