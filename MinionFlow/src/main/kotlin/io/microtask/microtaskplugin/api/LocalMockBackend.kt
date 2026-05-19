@@ -21,6 +21,10 @@ internal class LocalMockBackend(
         Thread(r, "microtask-mock").apply { isDaemon = true }
     }
 
+    fun dispose() {
+        scheduler.shutdownNow()
+    }
+
     private data class StoredProject(val id: String, val name: String)
     private data class StoredArtifact(
         val id: String,

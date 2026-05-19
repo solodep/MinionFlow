@@ -1,5 +1,4 @@
-
-    package io.microtask.microtaskplugin.wizard
+package io.microtask.microtaskplugin.wizard
 
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -33,8 +32,6 @@ data class MicroTaskStarterProjectModel(
 )
 
 object MicroTaskStarterProjectScaffolder {
-
-    private const val DEFAULT_SDK_COORDINATES = "io.github.verevka8:sdk:1.0.0"
 
     fun generate(model: MicroTaskStarterProjectModel) {
         val srcDir = model.projectRoot.resolve("src/main/java").resolve(model.packageName.replace('.', '/'))
@@ -102,16 +99,14 @@ object MicroTaskStarterProjectScaffolder {
         }.orEmpty()
 
         val dependencyLines = buildList {
-            add(dependencyBlock(DEFAULT_SDK_COORDINATES))
-
             model.sdkCoordinates
-                ?.takeIf { it.isNotBlank() && it != DEFAULT_SDK_COORDINATES }
+                ?.takeIf { it.isNotBlank() }
                 ?.let { add(dependencyBlock(it)) }
 
             addAll(model.extraDependencies.filter { it.isNotBlank() })
         }
 
-        val dependenciesBlock = """
+        val dependenciesBlock = if (dependencyLines.isEmpty()) "" else """
             <dependencies>
                 ${dependencyLines.joinToString("\n")}
             </dependencies>

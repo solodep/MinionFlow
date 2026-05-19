@@ -21,14 +21,14 @@ class MicroTaskSettingsService : PersistentStateComponent<MicroTaskSettingsServi
         var mockDataDir: String = ""
         var hasRefreshJwt: Boolean = false
 
-        var serverUrl: String = "https://ripoonchig.me/artifact-service"
+        var serverUrl: String = ""
         var runSubmitPathTemplate: String = "/api/projects/{projectId}/tasks"
         var runStatusPathTemplate: String = "/api/projects/{projectId}/tasks/{taskId}"
         var executionConfigPathTemplate: String = "/api/projects/{projectId}/executionConfigs"
 
-        var identityBaseUrl: String = "https://ripoonchig.me/identity-service"
-        var projectBaseUrl: String = "https://ripoonchig.me/project-service"
-        var artifactBaseUrl: String = "https://ripoonchig.me/artifact-service"
+        var identityBaseUrl: String = ""
+        var projectBaseUrl: String = ""
+        var artifactBaseUrl: String = ""
 
         var accountId: String = ""
         var sdkCoordinates: String = ""

@@ -1,10 +1,6 @@
 package io.microtask.microtaskplugin.ui
 
 import com.google.gson.GsonBuilder
-import com.google.gson.JsonArray
-import com.google.gson.JsonObject
-import com.google.gson.JsonParser
-import com.intellij.json.JsonFileType
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.options.ShowSettingsUtil
@@ -13,7 +9,6 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.ui.EditorTextField
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBScrollPane
@@ -31,12 +26,15 @@ import java.nio.file.Path
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import javax.swing.JButton
-import javax.swing.JCheckBox
 import javax.swing.JComboBox
-import javax.swing.JFileChooser
 import javax.swing.JPanel
-import javax.swing.JTabbedPane
 import javax.swing.ScrollPaneConstants
+
+internal fun button(text: String, action: () -> Unit): JButton =
+    JButton(text).apply { addActionListener { action() } }
+
+internal fun buttonGrid(columns: Int, vararg buttons: JButton): JPanel =
+    JPanel(GridLayout(0, columns, 8, 8)).apply { buttons.forEach { add(it) } }
 
 class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) {
 
@@ -59,42 +57,19 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
     private val artifactCombo = JComboBox<MicroTaskApiClient.ArtifactInfo>()
     private val inputCombo = JComboBox<MicroTaskApiClient.InputInfo>()
 
-    private val executionTypeCombo = editableCombo("", "stateless")
-    private val schedulingModeCombo = editableCombo("", "fixed", "adaptive", "auto")
-    private val parallelismField = JBTextField()
-    private val minParallelismField = JBTextField()
-    private val maxParallelismField = JBTextField()
-    private val workerBoundCombo = editableCombo("", "cpu", "io")
-    private val concurrencyField = JBTextField()
-    private val cpuField = JBTextField()
-    private val memoryField = JBTextField()
-    private val microtaskSecondsField = JBTextField()
-    private val taskSecondsField = JBTextField()
-    private val maxAttemptsField = JBTextField()
-    private val backoffStrategyCombo = editableCombo("", "fixed", "exponential", "linear")
-    private val baseMsField = JBTextField()
-    private val maxMsField = JBTextField()
-    private val jitterCheckBox = JCheckBox("Enable jitter")
-    private val inputTypeCombo = editableCombo("", "jsonl", "json", "csv")
-    private val inputBucketField = JBTextField()
-    private val inputKeyField = JBTextField()
-    private val outputTypeCombo = editableCombo("", "s3", "local")
-    private val outputBucketField = JBTextField()
-    private val outputPrefixField = JBTextField()
-    private val resultFilenameField = JBTextField()
-    private val resultFormatField = JBTextField()
-    private val uploadFromWorkDirField = JBTextField()
-    private val artifactsPathTemplateField = JBTextField()
-    private val allowDomainsField = JBTextField()
-
-    private val jsonEditor = EditorTextField(loadProjectJsonOrDefault(), project, JsonFileType.INSTANCE).apply {
-        setOneLineMode(false)
-        preferredSize = Dimension(420, 320)
-    }
-
     private val status = JBLabel("Ready")
     private val lastBuild = JBLabel("")
     private val lastRun = JBLabel("")
+
+    private val configForm = ExecutionConfigForm(
+        project = project,
+        initialJson = loadProjectJsonOrDefault(),
+        fallbackJson = { settings.state.runConfigJson },
+        onStatus = { status.text = it },
+        gson = gson
+    )
+
+    private val pipelineRunner = RunPipelineRunner(project, api, settings)
 
     init {
         minimumSize = Dimension(MIN_TOOL_WINDOW_WIDTH, 320)
@@ -102,7 +77,6 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
         updateLastBuildLabel()
         updateLastRunLabel()
         refreshAccountLabel()
-        loadFormFromJson(showStatus = false)
 
         ApplicationManager.getApplication().executeOnPooledThread {
             val hasSavedSession = api.refreshSavedSessionHint()
@@ -147,8 +121,8 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
             button("Save") { save() },
             button("Refresh") { reloadFromSettings() },
             button("Open microtask.json") { openProjectJsonInEditor() },
-            button("Validate JSON") { validateJson(showOk = true) },
-            button("Format JSON") { formatJson() },
+            button("Validate JSON") { configForm.validate(project, showOk = true) },
+            button("Format JSON") { configForm.format(project) },
             button("Open Settings") {
                 ShowSettingsUtil.getInstance().showSettingsDialog(project, MicroTaskSettingsConfigurable::class.java)
                 reloadFromSettings()
@@ -188,17 +162,6 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
             add(mainButtons, BorderLayout.CENTER)
         }
 
-        val optionsPanel = buildOptionsPanel()
-        val jsonPanel = JPanel(BorderLayout(0, 6)).apply {
-            add(JBLabel("Raw execution config (advanced mode):"), BorderLayout.NORTH)
-            add(JBScrollPane(jsonEditor), BorderLayout.CENTER)
-        }
-
-        val tabs = JTabbedPane().apply {
-            addTab("Options", optionsPanel)
-            addTab("Raw JSON", jsonPanel)
-        }
-
         val artifactButtons = buttonGrid(
             2,
             button("Upload JAR as new artifact") { uploadNewArtifact() },
@@ -221,7 +184,7 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
             minimumSize = Dimension(MIN_TOOL_WINDOW_WIDTH, 320)
             add(topSection, BorderLayout.NORTH)
             add(JPanel(BorderLayout(0, 8)).apply {
-                add(tabs, BorderLayout.CENTER)
+                add(configForm.component, BorderLayout.CENTER)
                 add(artifactButtons, BorderLayout.SOUTH)
             }, BorderLayout.CENTER)
             add(bottom, BorderLayout.SOUTH)
@@ -234,58 +197,12 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
         }, BorderLayout.CENTER)
     }
 
-    private fun buildOptionsPanel(): JPanel {
-        val optionsForm = FormBuilder.createFormBuilder()
-            .addLabeledComponent("Execution type:", executionTypeCombo, 1, false)
-            .addLabeledComponent("Scheduling mode:", schedulingModeCombo, 1, false)
-            .addLabeledComponent("Parallelism:", parallelismField, 1, false)
-            .addLabeledComponent("Min parallelism:", minParallelismField, 1, false)
-            .addLabeledComponent("Max parallelism:", maxParallelismField, 1, false)
-            .addLabeledComponent("Worker bound:", workerBoundCombo, 1, false)
-            .addLabeledComponent("Worker concurrency:", concurrencyField, 1, false)
-            .addLabeledComponent("CPU:", cpuField, 1, false)
-            .addLabeledComponent("Memory:", memoryField, 1, false)
-            .addLabeledComponent("Microtask timeout, sec:", microtaskSecondsField, 1, false)
-            .addLabeledComponent("Task timeout, sec:", taskSecondsField, 1, false)
-            .addLabeledComponent("Retry max attempts:", maxAttemptsField, 1, false)
-            .addLabeledComponent("Backoff strategy:", backoffStrategyCombo, 1, false)
-            .addLabeledComponent("Backoff base ms:", baseMsField, 1, false)
-            .addLabeledComponent("Backoff max ms:", maxMsField, 1, false)
-            .addLabeledComponent("Backoff jitter:", jitterCheckBox)
-            .addLabeledComponent("Input type:", inputTypeCombo, 1, false)
-            .addLabeledComponent("Input bucket:", inputBucketField, 1, false)
-            .addLabeledComponent("Input key:", inputKeyField, 1, false)
-            .addLabeledComponent("Output type:", outputTypeCombo, 1, false)
-            .addLabeledComponent("Output bucket:", outputBucketField, 1, false)
-            .addLabeledComponent("Output prefix:", outputPrefixField, 1, false)
-            .addLabeledComponent("Result filename:", resultFilenameField, 1, false)
-            .addLabeledComponent("Result format:", resultFormatField, 1, false)
-            .addLabeledComponent("Upload from work dir:", uploadFromWorkDirField, 1, false)
-            .addLabeledComponent("Artifacts path template:", artifactsPathTemplateField, 1, false)
-            .addLabeledComponent("Allow domains (comma-separated):", allowDomainsField, 1, false)
-            .panel
-
-        val syncButtons = buttonGrid(
-            2,
-            button("Apply form → JSON") { applyFormToJson() },
-            button("Load form ← JSON") { loadFormFromJson(showStatus = true) }
-        )
-
-        return JPanel(BorderLayout(0, 8)).apply {
-            add(JBScrollPane(optionsForm).apply {
-                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-                border = null
-            }, BorderLayout.CENTER)
-            add(syncButtons, BorderLayout.SOUTH)
-        }
-    }
-
     private fun save() {
         val state = settings.state
         state.serverUrl = serverUrlField.text.trim().trimEnd('/')
         state.projectBinding = projectBindingField.text.trim()
-        state.runConfigJson = jsonEditor.text
-        writeProjectJson(jsonEditor.text)
+        state.runConfigJson = configForm.text
+        writeProjectJson(configForm.text)
         status.text = "Saved"
         updateLastBuildLabel()
     }
@@ -293,8 +210,7 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
     private fun reloadFromSettings() {
         serverUrlField.text = settings.state.serverUrl
         projectBindingField.text = settings.state.projectBinding
-        jsonEditor.text = loadProjectJsonOrDefault()
-        loadFormFromJson(showStatus = false)
+        configForm.reloadFromExternalText(loadProjectJsonOrDefault())
         status.text = "Reloaded"
         updateLastBuildLabel()
         refreshAccountLabel()
@@ -372,9 +288,7 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
 
         val jar = currentJarPath() ?: return
         val alias = Messages.showInputDialog(project, "Alias (name shown in UI)", "Create Artifact", null, jar.fileName.toString(), null)
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: return
+            ?.trim()?.takeIf { it.isNotBlank() } ?: return
 
         runApiTask("Upload artifact", { api.createArtifact(projectId, alias, jar) }) { created ->
             settings.state.selectedArtifactId = created.id
@@ -421,7 +335,7 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
             return
         }
 
-        val spec = chooseInputUploadSpec() ?: return
+        val spec = chooseInputUploadSpec(this, project, configForm.suggestedInputType) ?: return
         runApiTask("Upload input", { api.createInput(projectId, spec.alias, spec.inputType, spec.file) }) { created ->
             settings.state.selectedInputId = created.id
             loadInputsInBackground()
@@ -436,7 +350,7 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
         }
 
         save()
-        if (!validateJson(showOk = false)) return
+        if (!configForm.validate(project, showOk = false)) return
 
         val selectedArtifact = artifactCombo.selectedItem as? MicroTaskApiClient.ArtifactInfo
         val aliasForNewArtifact = if (selectedArtifact == null) {
@@ -447,78 +361,46 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
         }
 
         val selectedInput = inputCombo.selectedItem as? MicroTaskApiClient.InputInfo
-        val inputUploadSpec = if (selectedInput == null) chooseInputUploadSpec() else null
+        val inputUploadSpec = if (selectedInput == null) chooseInputUploadSpec(this, project, configForm.suggestedInputType) else null
         if (selectedInput == null && inputUploadSpec == null) return
 
-        val configSnapshot = jsonEditor.text
-        val configAlias = defaultConfigAlias()
+        val inputs = RunPipelineRunner.Inputs(
+            projectId = projectId,
+            selectedArtifact = selectedArtifact,
+            aliasForNewArtifact = aliasForNewArtifact,
+            selectedInput = selectedInput,
+            inputUploadSpec = inputUploadSpec,
+            configSnapshot = configForm.text,
+            configAlias = defaultConfigAlias()
+        )
 
-        object : Task.Backgroundable(project, "MicroTask: Run", true) {
-            override fun run(indicator: ProgressIndicator) {
-                try {
-                    indicator.text = "Build artifact"
-                    val build = MicroTaskJarBuilder.buildJarBlocking(project, indicator)
-                    if (!build.ok || build.jar == null) {
-                        throw RuntimeException("Build failed")
-                    }
-
-                    settings.state.lastBuildOk = true
-                    settings.state.lastBuildJarPath = build.jar.toString()
-                    settings.state.lastBuildAtEpochMs = System.currentTimeMillis()
-
-                    indicator.text = "Upload or update JAR"
-                    val jarId = if (selectedArtifact != null) {
-                        api.updateArtifactContent(projectId, selectedArtifact.id, build.jar)
-                        selectedArtifact.id
-                    } else {
-                        api.createArtifact(projectId, aliasForNewArtifact, build.jar).id
-                    }
-                    settings.state.selectedArtifactId = jarId
-
-                    indicator.text = "Prepare input"
-                    val inputId = if (selectedInput != null) {
-                        selectedInput.id
-                    } else {
-                        val spec = inputUploadSpec ?: throw IllegalStateException("Input was not chosen")
-                        api.createInput(projectId, spec.alias, spec.inputType, spec.file).id
-                    }
-                    settings.state.selectedInputId = inputId
-
-                    indicator.text = "Create config and start task"
-                    val result = api.submitTask(projectId, jarId, inputId, configAlias, configSnapshot)
-                    if (result.runId.isNotBlank()) settings.state.lastRunId = result.runId
-
-                    ApplicationManager.getApplication().invokeLater {
-                        updateLastBuildLabel()
-                        updateLastRunLabel()
-                        status.text = if (result.runId.isBlank()) "Task started (no taskId in response)" else "Task started: ${result.runId}"
-                        loadArtifactsInBackground(silent = true)
-                        loadInputsInBackground(silent = true)
-                        if (result.runId.isBlank()) {
-                            Messages.showInfoMessage(project, result.rawResponse, "Task response")
-                        }
-                    }
-                } catch (e: MicroTaskApiClient.ApiException) {
-                    ApplicationManager.getApplication().invokeLater {
-                        status.text = "Run: FAIL"
-                        Messages.showErrorDialog(project, "${e.message}\n\n(code: ${e.code ?: ""}, http: ${e.status})", "MicroTask")
-                    }
-                } catch (e: Exception) {
-                    ApplicationManager.getApplication().invokeLater {
-                        status.text = "Run: FAIL"
-                        Messages.showErrorDialog(project, e.message ?: e.toString(), "MicroTask")
-                    }
+        pipelineRunner.run(
+            inputs = inputs,
+            onSuccess = { result ->
+                updateLastBuildLabel()
+                updateLastRunLabel()
+                status.text = if (result.runId.isBlank()) "Task started (no taskId in response)" else "Task started: ${result.runId}"
+                loadArtifactsInBackground(silent = true)
+                loadInputsInBackground(silent = true)
+                if (result.runId.isBlank()) {
+                    Messages.showInfoMessage(project, result.rawResponse, "Task response")
+                }
+            },
+            onFailure = { e ->
+                status.text = "Run: FAIL"
+                if (e is MicroTaskApiClient.ApiException) {
+                    Messages.showErrorDialog(project, "${e.message}\n\n(code: ${e.code ?: ""}, http: ${e.status})", "MicroTask")
+                } else {
+                    Messages.showErrorDialog(project, e.message ?: e.toString(), "MicroTask")
                 }
             }
-        }.queue()
+        )
     }
 
     private fun checkStatus() {
         val initial = settings.state.lastRunId
         val runId = Messages.showInputDialog(project, "Task ID", "Check task status", null, initial, null)
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: return
+            ?.trim()?.takeIf { it.isNotBlank() } ?: return
 
         val projectId = currentProjectId()
         if (projectId.isBlank()) {
@@ -529,7 +411,7 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
         runApiTask("Get task status", { api.getRunStatus(projectId, runId) }) { raw ->
             settings.state.lastRunId = runId
             updateLastRunLabel()
-            Messages.showInfoMessage(project, formatTaskStatus(raw), "Task status")
+            Messages.showInfoMessage(project, formatTaskStatus(raw, gson), "Task status")
         }
     }
 
@@ -552,46 +434,6 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
         return path
     }
 
-    private fun chooseInputUploadSpec(): InputUploadSpec? {
-        val chooser = JFileChooser(project.basePath ?: System.getProperty("user.home")).apply {
-            dialogTitle = "Choose input file"
-            fileSelectionMode = JFileChooser.FILES_ONLY
-        }
-        val result = chooser.showOpenDialog(this)
-        if (result != JFileChooser.APPROVE_OPTION) return null
-        val file = chooser.selectedFile?.toPath() ?: return null
-        val alias = Messages.showInputDialog(project, "Input alias", "Upload Input", null, file.fileName.toString(), null)
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: return null
-        val suggestedType = comboValue(inputTypeCombo).ifBlank { "jsonl" }
-        val inputType = Messages.showInputDialog(project, "Input type", "Upload Input", null, suggestedType, null)
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: return null
-        return InputUploadSpec(file, alias, inputType)
-    }
-
-    private fun formatTaskStatus(raw: String): String {
-        val root = runCatching { JsonParser.parseString(raw).asJsonObject }.getOrNull() ?: return raw
-        val fields = listOf(
-            "taskId" to readPathString(root, listOf("taskId")),
-            "status" to readPathString(root, listOf("status")),
-            "jarId" to readPathString(root, listOf("jarId")),
-            "jarAlias" to readPathString(root, listOf("jarAlias")),
-            "inputId" to readPathString(root, listOf("inputId")),
-            "inputAlias" to readPathString(root, listOf("inputAlias")),
-            "configId" to readPathString(root, listOf("configId")),
-            "configAlias" to readPathString(root, listOf("configAlias")),
-            "createdAt" to readPathString(root, listOf("createdAt")),
-            "startedAt" to readPathString(root, listOf("startedAt")),
-            "finishedAt" to readPathString(root, listOf("finishedAt")),
-            "doneAt" to readPathString(root, listOf("doneAt"))
-        )
-        val pretty = fields.filter { it.second.isNotBlank() }.joinToString("\n") { "${it.first}: ${it.second}" }
-        return if (pretty.isBlank()) gson.toJson(root) else pretty
-    }
-
     private fun <T> restoreComboSelection(combo: JComboBox<T>, wantedId: String) {
         if (wantedId.isBlank()) return
         for (i in 0 until combo.itemCount) {
@@ -608,7 +450,13 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
         }
     }
 
+    private fun commitTextFieldsToSettings() {
+        settings.state.serverUrl = serverUrlField.text.trim().trimEnd('/')
+        settings.state.projectBinding = projectBindingField.text.trim()
+    }
+
     private fun <T> runApiTask(title: String, action: () -> T, onOk: ((T) -> Unit)? = null) {
+        commitTextFieldsToSettings()
         object : Task.Backgroundable(project, "MicroTask: $title", true) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = title
@@ -682,234 +530,6 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
         lastRun.text = if (id.isBlank()) "Last run: —" else "Last run: $id"
     }
 
-    private fun validateJson(showOk: Boolean): Boolean {
-        val text = jsonEditor.text
-        val root = try {
-            JsonParser.parseString(text).asJsonObject
-        } catch (e: Exception) {
-            Messages.showErrorDialog(project, "Invalid JSON: ${e.message}", "MicroTask")
-            status.text = "JSON invalid"
-            return false
-        }
-
-        val structureError = validateRunConfigStructure(root)
-        if (structureError != null) {
-            Messages.showErrorDialog(project, structureError, "MicroTask")
-            status.text = "JSON invalid"
-            return false
-        }
-
-        if (showOk) {
-            Messages.showInfoMessage(project, "Execution config structure looks valid", "MicroTask")
-        }
-        status.text = "JSON valid"
-        return true
-    }
-
-    private fun validateRunConfigStructure(root: JsonObject): String? {
-        if (!root.has("execution") || !root.get("execution").isJsonObject) return "Missing object: execution"
-        if (!root.has("input") || !root.get("input").isJsonObject) return "Missing object: input"
-        if (!root.has("output") || !root.get("output").isJsonObject) return "Missing object: output"
-
-        val execution = root.getAsJsonObject("execution")
-        if (execution == null) return "Missing object: execution"
-        if (!execution.has("worker") || !execution.get("worker").isJsonObject) return "Missing object: execution.worker"
-        if (!execution.has("timeouts") || !execution.get("timeouts").isJsonObject) return "Missing object: execution.timeouts"
-
-        return null
-    }
-
-    private fun formatJson() {
-        val root = try {
-            JsonParser.parseString(jsonEditor.text)
-        } catch (e: Exception) {
-            Messages.showErrorDialog(project, "Invalid JSON: ${e.message}", "MicroTask")
-            return
-        }
-        jsonEditor.text = gson.toJson(root)
-        status.text = "JSON formatted"
-    }
-
-    private fun applyFormToJson() {
-        val root = parseOrDefaultConfig()
-
-        setPathString(root, listOf("execution", "type"), comboValue(executionTypeCombo))
-        setPathString(root, listOf("execution", "scheduling", "mode"), comboValue(schedulingModeCombo))
-        setPathInt(root, listOf("execution", "scheduling", "parallelism"), intValue(parallelismField))
-        setPathInt(root, listOf("execution", "scheduling", "minParallelism"), intValue(minParallelismField))
-        setPathInt(root, listOf("execution", "scheduling", "maxParallelism"), intValue(maxParallelismField))
-        setPathString(root, listOf("execution", "worker", "bound"), comboValue(workerBoundCombo))
-        setPathInt(root, listOf("execution", "worker", "concurrency"), intValue(concurrencyField))
-        setPathString(root, listOf("execution", "worker", "resources", "cpu"), cpuField.text.trim())
-        setPathString(root, listOf("execution", "worker", "resources", "memory"), memoryField.text.trim())
-        setPathInt(root, listOf("execution", "timeouts", "microtaskSeconds"), intValue(microtaskSecondsField))
-        setPathInt(root, listOf("execution", "timeouts", "taskSeconds"), intValue(taskSecondsField))
-        setPathInt(root, listOf("execution", "retry", "maxAttempts"), intValue(maxAttemptsField))
-        setPathString(root, listOf("execution", "retry", "backoff", "strategy"), comboValue(backoffStrategyCombo))
-        setPathInt(root, listOf("execution", "retry", "backoff", "baseMs"), intValue(baseMsField))
-        setPathInt(root, listOf("execution", "retry", "backoff", "maxMs"), intValue(maxMsField))
-        setPathBoolean(root, listOf("execution", "retry", "backoff", "jitter"), jitterCheckBox.isSelected)
-        setPathString(root, listOf("input", "type"), comboValue(inputTypeCombo))
-        setPathString(root, listOf("input", "source", "bucket"), inputBucketField.text.trim())
-        setPathString(root, listOf("input", "source", "key"), inputKeyField.text.trim())
-        setPathString(root, listOf("output", "destination", "type"), comboValue(outputTypeCombo))
-        setPathString(root, listOf("output", "destination", "bucket"), outputBucketField.text.trim())
-        setPathString(root, listOf("output", "destination", "prefix"), outputPrefixField.text.trim())
-        setPathString(root, listOf("output", "perTask", "result", "filename"), resultFilenameField.text.trim())
-        setPathString(root, listOf("output", "perTask", "result", "format"), resultFormatField.text.trim())
-        setPathString(root, listOf("output", "artifacts", "uploadFromWorkDir"), uploadFromWorkDirField.text.trim())
-        setPathString(root, listOf("output", "artifacts", "pathTemplate"), artifactsPathTemplateField.text.trim())
-        setPathStringArray(root, listOf("security", "network", "allowDomains"), commaSeparatedValues(allowDomainsField.text))
-
-        jsonEditor.text = gson.toJson(root)
-        status.text = "Options applied to JSON"
-    }
-
-    private fun loadFormFromJson(showStatus: Boolean) {
-        val root = try {
-            JsonParser.parseString(jsonEditor.text).asJsonObject
-        } catch (_: Exception) {
-            parseOrDefaultConfig()
-        }
-
-        selectCombo(executionTypeCombo, readPathString(root, listOf("execution", "type")))
-        selectCombo(schedulingModeCombo, readPathString(root, listOf("execution", "scheduling", "mode")))
-        parallelismField.text = readPathInt(root, listOf("execution", "scheduling", "parallelism"))
-        minParallelismField.text = readPathInt(root, listOf("execution", "scheduling", "minParallelism"))
-        maxParallelismField.text = readPathInt(root, listOf("execution", "scheduling", "maxParallelism"))
-        selectCombo(workerBoundCombo, readPathString(root, listOf("execution", "worker", "bound")))
-        concurrencyField.text = readPathInt(root, listOf("execution", "worker", "concurrency"))
-        cpuField.text = readPathString(root, listOf("execution", "worker", "resources", "cpu"))
-        memoryField.text = readPathString(root, listOf("execution", "worker", "resources", "memory"))
-        microtaskSecondsField.text = readPathInt(root, listOf("execution", "timeouts", "microtaskSeconds"))
-        taskSecondsField.text = readPathInt(root, listOf("execution", "timeouts", "taskSeconds"))
-        maxAttemptsField.text = readPathInt(root, listOf("execution", "retry", "maxAttempts"))
-        selectCombo(backoffStrategyCombo, readPathString(root, listOf("execution", "retry", "backoff", "strategy")))
-        baseMsField.text = readPathInt(root, listOf("execution", "retry", "backoff", "baseMs"))
-        maxMsField.text = readPathInt(root, listOf("execution", "retry", "backoff", "maxMs"))
-        jitterCheckBox.isSelected = readPathBoolean(root, listOf("execution", "retry", "backoff", "jitter"))
-        selectCombo(inputTypeCombo, readPathString(root, listOf("input", "type")))
-        inputBucketField.text = readPathString(root, listOf("input", "source", "bucket"))
-        inputKeyField.text = readPathString(root, listOf("input", "source", "key"))
-        selectCombo(outputTypeCombo, readPathString(root, listOf("output", "destination", "type")))
-        outputBucketField.text = readPathString(root, listOf("output", "destination", "bucket"))
-        outputPrefixField.text = readPathString(root, listOf("output", "destination", "prefix"))
-        resultFilenameField.text = readPathString(root, listOf("output", "perTask", "result", "filename"))
-        resultFormatField.text = readPathString(root, listOf("output", "perTask", "result", "format"))
-        uploadFromWorkDirField.text = readPathString(root, listOf("output", "artifacts", "uploadFromWorkDir"))
-        artifactsPathTemplateField.text = readPathString(root, listOf("output", "artifacts", "pathTemplate"))
-        allowDomainsField.text = readPathStringArray(root, listOf("security", "network", "allowDomains")).joinToString(", ")
-
-        if (showStatus) status.text = "Options loaded from JSON"
-    }
-
-    private fun parseOrDefaultConfig(): JsonObject {
-        return try {
-            JsonParser.parseString(jsonEditor.text).asJsonObject
-        } catch (_: Exception) {
-            JsonParser.parseString(settings.state.runConfigJson).asJsonObject
-        }
-    }
-
-    private fun readPathString(root: JsonObject, path: List<String>): String {
-        var current: JsonObject = root
-        for (i in 0 until path.lastIndex) {
-            val next = current.get(path[i]) ?: return ""
-            if (!next.isJsonObject) return ""
-            current = next.asJsonObject
-        }
-        val leaf = current.get(path.last()) ?: return ""
-        return if (leaf.isJsonPrimitive) leaf.asString else ""
-    }
-
-    private fun readPathInt(root: JsonObject, path: List<String>): String {
-        var current: JsonObject = root
-        for (i in 0 until path.lastIndex) {
-            val next = current.get(path[i]) ?: return ""
-            if (!next.isJsonObject) return ""
-            current = next.asJsonObject
-        }
-        val leaf = current.get(path.last()) ?: return ""
-        return if (leaf.isJsonPrimitive) runCatching { leaf.asInt.toString() }.getOrElse { "" } else ""
-    }
-
-    private fun readPathBoolean(root: JsonObject, path: List<String>): Boolean {
-        var current: JsonObject = root
-        for (i in 0 until path.lastIndex) {
-            val next = current.get(path[i]) ?: return false
-            if (!next.isJsonObject) return false
-            current = next.asJsonObject
-        }
-        val leaf = current.get(path.last()) ?: return false
-        return leaf.isJsonPrimitive && runCatching { leaf.asBoolean }.getOrDefault(false)
-    }
-
-    private fun readPathStringArray(root: JsonObject, path: List<String>): List<String> {
-        var current: JsonObject = root
-        for (i in 0 until path.lastIndex) {
-            val next = current.get(path[i]) ?: return emptyList()
-            if (!next.isJsonObject) return emptyList()
-            current = next.asJsonObject
-        }
-        val leaf = current.get(path.last()) ?: return emptyList()
-        if (!leaf.isJsonArray) return emptyList()
-        return leaf.asJsonArray.mapNotNull { if (it.isJsonPrimitive) it.asString else null }
-    }
-
-    private fun setPathString(root: JsonObject, path: List<String>, value: String) {
-        val parent = ensureObjectPath(root, path.dropLast(1))
-        if (value.isBlank()) parent.remove(path.last()) else parent.addProperty(path.last(), value)
-    }
-
-    private fun setPathInt(root: JsonObject, path: List<String>, value: Int?) {
-        val parent = ensureObjectPath(root, path.dropLast(1))
-        if (value == null) parent.remove(path.last()) else parent.addProperty(path.last(), value)
-    }
-
-    private fun setPathBoolean(root: JsonObject, path: List<String>, value: Boolean) {
-        val parent = ensureObjectPath(root, path.dropLast(1))
-        parent.addProperty(path.last(), value)
-    }
-
-    private fun setPathStringArray(root: JsonObject, path: List<String>, values: List<String>) {
-        val parent = ensureObjectPath(root, path.dropLast(1))
-        if (values.isEmpty()) {
-            parent.remove(path.last())
-            return
-        }
-        val array = JsonArray()
-        values.forEach { array.add(it) }
-        parent.add(path.last(), array)
-    }
-
-    private fun ensureObjectPath(root: JsonObject, path: List<String>): JsonObject {
-        var current = root
-        for (part in path) {
-            val next = current.get(part)
-            current = if (next != null && next.isJsonObject) {
-                next.asJsonObject
-            } else {
-                JsonObject().also { current.add(part, it) }
-            }
-        }
-        return current
-    }
-
-    private fun intValue(field: JBTextField): Int? = field.text.trim().toIntOrNull()
-
-    private fun comboValue(combo: JComboBox<String>): String {
-        return combo.editor.item?.toString()?.trim().orEmpty()
-    }
-
-    private fun selectCombo(combo: JComboBox<String>, value: String) {
-        combo.selectedItem = value
-        combo.editor.item = value
-    }
-
-    private fun commaSeparatedValues(text: String): List<String> {
-        return text.split(',').map { it.trim() }.filter { it.isNotBlank() }
-    }
-
     private fun defaultJarAlias(): String {
         val projectName = project.name.ifBlank { "microtask" }
         return "$projectName.jar"
@@ -919,24 +539,4 @@ class MicroTaskToolWindowPanel(private val project: Project) : JPanel(BorderLayo
         val suffix = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
         return "config-$suffix"
     }
-
-    private fun editableCombo(vararg values: String): JComboBox<String> {
-        return JComboBox(values).apply { isEditable = true }
-    }
-
-    private fun button(text: String, action: () -> Unit): JButton {
-        return JButton(text).apply { addActionListener { action() } }
-    }
-
-    private fun buttonGrid(columns: Int, vararg buttons: JButton): JPanel {
-        return JPanel(GridLayout(0, columns, 8, 8)).apply {
-            buttons.forEach { add(it) }
-        }
-    }
-
-    private data class InputUploadSpec(
-        val file: Path,
-        val alias: String,
-        val inputType: String
-    )
 }

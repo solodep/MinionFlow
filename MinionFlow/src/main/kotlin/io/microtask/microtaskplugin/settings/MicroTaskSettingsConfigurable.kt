@@ -101,19 +101,19 @@ class MicroTaskSettingsConfigurable : Configurable {
                     textField()
                         .bindText(model::identityBaseUrl)
                         .align(AlignX.FILL)
-                        .comment("Swagger: https://ripoonchig.me/identity-service/q/swagger-ui/")
+                        .comment("Base URL of identity-service. Swagger usually at &lt;host&gt;/q/swagger-ui/")
                 }
                 row("Project base URL") {
                     textField()
                         .bindText(model::projectBaseUrl)
                         .align(AlignX.FILL)
-                        .comment("Swagger: https://ripoonchig.me/project-service/q/swagger-ui/")
+                        .comment("Base URL of project-service. Swagger usually at &lt;host&gt;/q/swagger-ui/")
                 }
                 row("Artifact base URL") {
                     textField()
                         .bindText(model::artifactBaseUrl)
                         .align(AlignX.FILL)
-                        .comment("Swagger: https://ripoonchig.me/artifact-service/q/swagger-ui/")
+                        .comment("Base URL of artifact-service. Swagger usually at &lt;host&gt;/q/swagger-ui/")
                 }
                 row("Default project binding") {
                     textField()

@@ -6,6 +6,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import io.microtask.microtaskplugin.settings.MicroTaskSettingsService
@@ -25,7 +26,11 @@ import java.time.Instant
 import java.util.UUID
 
 @Service(Service.Level.APP)
-class MicroTaskApiClient {
+class MicroTaskApiClient : Disposable {
+
+    override fun dispose() {
+        mockBackend.dispose()
+    }
 
     private val log = Logger.getInstance(MicroTaskApiClient::class.java)
     private val settings = MicroTaskSettingsService.getInstance()
@@ -223,7 +228,7 @@ class MicroTaskApiClient {
     fun listProjects(page: Int? = null, size: Int? = null): List<ProjectInfo> {
         if (isMock()) return mockBackend.listProjects()
 
-        val base = "${settings.state.projectBaseUrl}/projects"
+        val base = "${settings.state.projectBaseUrl}/api/projects"
         val url = buildString {
             append(base)
             val params = mutableListOf<String>()
@@ -560,12 +565,15 @@ class MicroTaskApiClient {
 
     private fun parseInputRecord(element: JsonElement): InputInfo? {
         val obj = element.asJsonObjectOrNull() ?: return null
-        val artifactObj = obj.getAsJsonObject("artifact") ?: obj
-        val id = readString(artifactObj, listOf("artifactId", "id"))
+        val nested = obj.getAsJsonObject("input")
+            ?: obj.getAsJsonObject("artifact")
+            ?: obj
+        val id = readString(nested, listOf("inputId", "artifactId", "id"))
         val alias = readString(obj, listOf("alias", "name")).ifBlank {
-            readString(artifactObj, listOf("originalName", "fileName", "name")).ifBlank { id }
+            readString(nested, listOf("originalName", "fileName", "name")).ifBlank { id }
         }
         val inputType = readString(obj, listOf("inputType", "type"))
+            .ifBlank { readString(nested, listOf("inputType", "type")) }
         return if (id.isBlank()) null else InputInfo(id, alias, inputType)
     }
 
@@ -602,37 +610,45 @@ class MicroTaskApiClient {
 
     private fun extractRunId(respText: String): String {
         val el = runCatching { gson.fromJson(respText, JsonElement::class.java) }.getOrNull() ?: return ""
-        return findFirstStringByKeys(el, listOf("taskId", "runId", "executionId")) ?: ""
+        return findScopedString(
+            el,
+            primaryKeys = listOf("taskId", "runId", "executionId"),
+            wrapperKeys = listOf("task", "run", "execution", "data", "result")
+        ) ?: ""
     }
 
     private fun extractExecutionConfigId(respText: String): String {
         val el = runCatching { gson.fromJson(respText, JsonElement::class.java) }.getOrNull() ?: return ""
-        return findFirstStringByKeys(el, listOf("configId", "executionConfigId", "id")) ?: ""
+        val obj = el.asJsonObjectOrNull() ?: return ""
+
+        readString(obj, listOf("configId", "executionConfigId"))
+            .ifBlank { null }?.let { return it }
+
+        for (wrapper in listOf("executionConfig", "config", "data", "result")) {
+            val nested = obj.getAsJsonObject(wrapper) ?: continue
+            readString(nested, listOf("configId", "executionConfigId", "id"))
+                .ifBlank { null }?.let { return it }
+        }
+
+        return readString(obj, listOf("id"))
     }
 
-    private fun findFirstStringByKeys(root: JsonElement, keys: List<String>): String? {
-        if (root.isJsonObject) {
-            val obj = root.asJsonObject
-            for (key in keys) {
-                val value = obj.get(key)
-                if (value != null && value.isJsonPrimitive) {
-                    val stringValue = value.asString
-                    if (stringValue.isNotBlank()) return stringValue
-                }
-            }
-            for ((_, value) in obj.entrySet()) {
-                val nested = findFirstStringByKeys(value, keys)
-                if (!nested.isNullOrBlank()) return nested
-            }
-        }
+    private fun findScopedString(
+        root: JsonElement,
+        primaryKeys: List<String>,
+        wrapperKeys: List<String>
+    ): String? {
+        val obj = root.asJsonObjectOrNull()
+            ?: return if (root.isJsonArray) root.asJsonArray.asSequence()
+                .mapNotNull { findScopedString(it, primaryKeys, wrapperKeys) }
+                .firstOrNull() else null
 
-        if (root.isJsonArray) {
-            for (value in root.asJsonArray) {
-                val nested = findFirstStringByKeys(value, keys)
-                if (!nested.isNullOrBlank()) return nested
-            }
-        }
+        readString(obj, primaryKeys).ifBlank { null }?.let { return it }
 
+        for (wrapper in wrapperKeys) {
+            val nested = obj.get(wrapper) ?: continue
+            findScopedString(nested, primaryKeys, wrapperKeys)?.let { return it }
+        }
         return null
     }
 

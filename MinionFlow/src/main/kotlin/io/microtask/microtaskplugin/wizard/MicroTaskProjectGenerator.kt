@@ -12,6 +12,7 @@ import com.intellij.openapi.externalSystem.util.ui.DataView
 import com.intellij.openapi.project.Project
 import com.intellij.ui.dsl.builder.Panel
 import com.intellij.ui.dsl.builder.bindText
+import io.microtask.microtaskplugin.settings.MicroTaskSettingsService
 import javax.swing.Icon
 import java.nio.file.Path
 
@@ -96,15 +97,21 @@ private class MicroTaskMavenStarterStep(
             normalizedArtifactId
         )
 
+        val contentEntry = parentStep.contentEntryPath?.takeIf { it.isNotBlank() }
+            ?: error("Project location is not set")
+
+        val settings = MicroTaskSettingsService.getInstance().state
+
         val model = MicroTaskStarterProjectModel(
             groupId = normalizedGroupId,
             artifactId = normalizedArtifactId,
             version = version.trim().ifBlank { "0.1.0-SNAPSHOT" },
             packageName = normalizedPackageName,
             projectName = parentStep.name.ifBlank { normalizedArtifactId },
-            projectRoot = Path.of(parentStep.contentEntryPath),
+            projectRoot = Path.of(contentEntry),
             executionMode = executionMode,
-            sdkCoordinates = "io.github.verevka8:sdk:1.0.0"
+            sdkCoordinates = settings.sdkCoordinates.trim().ifBlank { null },
+            repositoryUrl = settings.sdkRepositoryUrl.trim().ifBlank { null }
         )
 
         MicroTaskStarterProjectScaffolder.generate(model)
