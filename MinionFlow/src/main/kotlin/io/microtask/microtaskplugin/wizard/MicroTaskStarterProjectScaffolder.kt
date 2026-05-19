@@ -263,7 +263,7 @@ object MicroTaskStarterProjectScaffolder {
                 "limits": {}
               },
               "input": {
-                "type": "jsonl",
+                "type": "JSONL",
                 "source": {
                   "bucket": "micro-tasks",
                   "key": "100.jsonl"

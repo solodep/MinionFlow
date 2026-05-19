@@ -228,7 +228,7 @@ class MicroTaskApiClient : Disposable {
     fun listProjects(page: Int? = null, size: Int? = null): List<ProjectInfo> {
         if (isMock()) return mockBackend.listProjects()
 
-        val base = "${settings.state.projectBaseUrl}/api/projects"
+        val base = "${settings.state.projectBaseUrl}/projects"
         val url = buildString {
             append(base)
             val params = mutableListOf<String>()
@@ -555,7 +555,7 @@ class MicroTaskApiClient : Disposable {
 
     private fun parseArtifactRecord(element: JsonElement): ArtifactInfo? {
         val obj = element.asJsonObjectOrNull() ?: return null
-        val artifactObj = obj.getAsJsonObject("artifact") ?: obj
+        val artifactObj = obj.objectFieldOrNull("artifact") ?: obj
         val id = readString(artifactObj, listOf("artifactId", "id"))
         val alias = readString(obj, listOf("alias", "name")).ifBlank {
             readString(artifactObj, listOf("originalName", "fileName", "name")).ifBlank { id }
@@ -565,8 +565,8 @@ class MicroTaskApiClient : Disposable {
 
     private fun parseInputRecord(element: JsonElement): InputInfo? {
         val obj = element.asJsonObjectOrNull() ?: return null
-        val nested = obj.getAsJsonObject("input")
-            ?: obj.getAsJsonObject("artifact")
+        val nested = obj.objectFieldOrNull("input")
+            ?: obj.objectFieldOrNull("artifact")
             ?: obj
         val id = readString(nested, listOf("inputId", "artifactId", "id"))
         val alias = readString(obj, listOf("alias", "name")).ifBlank {
@@ -577,7 +577,7 @@ class MicroTaskApiClient : Disposable {
         return if (id.isBlank()) null else InputInfo(id, alias, inputType)
     }
 
-    private fun JsonObject.getAsJsonObject(name: String): JsonObject? {
+    private fun JsonObject.objectFieldOrNull(name: String): JsonObject? {
         val el = get(name) ?: return null
         return if (el.isJsonObject) el.asJsonObject else null
     }
@@ -598,14 +598,19 @@ class MicroTaskApiClient : Disposable {
 
     private fun normalizeExecutionConfig(configJson: String): JsonObject {
         val root = runCatching { JsonParser.parseString(configJson).asJsonObject }.getOrElse { JsonObject() }
-        if (root.has("execution") || root.has("input") || root.has("output") || root.has("security")) {
-            return root
+
+        val execution = root.objectFieldOrNull("execution")
+        if (execution != null) {
+            val securityNetwork = root.objectFieldOrNull("security")?.objectFieldOrNull("network")
+            if (securityNetwork != null && !execution.has("network")) {
+                execution.add("network", securityNetwork)
+            }
+            return execution
         }
-        val config = root.getAsJsonObject("config")
-        if (config != null) return config
-        val configuration = root.getAsJsonObject("configuration")
-        if (configuration != null) return configuration
-        return root
+
+        return root.objectFieldOrNull("config")
+            ?: root.objectFieldOrNull("configuration")
+            ?: root
     }
 
     private fun extractRunId(respText: String): String {
@@ -625,7 +630,7 @@ class MicroTaskApiClient : Disposable {
             .ifBlank { null }?.let { return it }
 
         for (wrapper in listOf("executionConfig", "config", "data", "result")) {
-            val nested = obj.getAsJsonObject(wrapper) ?: continue
+            val nested = obj.objectFieldOrNull(wrapper) ?: continue
             readString(nested, listOf("configId", "executionConfigId", "id"))
                 .ifBlank { null }?.let { return it }
         }

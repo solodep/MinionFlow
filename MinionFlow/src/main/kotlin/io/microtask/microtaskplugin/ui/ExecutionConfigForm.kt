@@ -44,7 +44,7 @@ internal class ExecutionConfigForm(
     private val baseMsField = JBTextField()
     private val maxMsField = JBTextField()
     private val jitterCheckBox = JCheckBox("Enable jitter")
-    private val inputTypeCombo = editableCombo("", "jsonl", "json", "csv")
+    private val inputTypeCombo = editableCombo("", "JSONL")
     private val inputBucketField = JBTextField()
     private val inputKeyField = JBTextField()
     private val outputTypeCombo = editableCombo("", "s3", "local")
@@ -75,7 +75,7 @@ internal class ExecutionConfigForm(
         }
 
     val suggestedInputType: String
-        get() = comboValue(inputTypeCombo).ifBlank { "jsonl" }
+        get() = comboValue(inputTypeCombo).ifBlank { "JSONL" }
 
     fun reloadFromExternalText(value: String) {
         jsonEditor.text = value

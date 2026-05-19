@@ -33,7 +33,7 @@ internal fun chooseInputUploadSpec(
     val file = chooser.selectedFile?.toPath() ?: return null
     val alias = Messages.showInputDialog(project, "Input alias", "Upload Input", null, file.fileName.toString(), null)
         ?.trim()?.takeIf { it.isNotBlank() } ?: return null
-    val inputType = Messages.showInputDialog(project, "Input type", "Upload Input", null, suggestedType.ifBlank { "jsonl" }, null)
+    val inputType = Messages.showInputDialog(project, "Input type", "Upload Input", null, suggestedType.ifBlank { "JSONL" }, null)
         ?.trim()?.takeIf { it.isNotBlank() } ?: return null
     return InputUploadSpec(file, alias, inputType)
 }

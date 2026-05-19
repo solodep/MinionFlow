@@ -19,6 +19,8 @@ dependencies {
     implementation("com.auth0:java-jwt:4.5.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    testImplementation("junit:junit:4.13.2")
+
     intellijPlatform {
         intellijIdea("2025.3.2") {
             useInstaller = false
