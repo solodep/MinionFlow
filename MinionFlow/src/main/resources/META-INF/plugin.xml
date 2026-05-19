@@ -3,7 +3,7 @@
 
     <name>MicroTask</name>
 
-    <vendor url="https://github.com/solodep/IntelliJ-plugin">MicroTask</vendor>
+    <vendor url="https://github.com/solodep/MinionFlow">MicroTask</vendor>
 
     <resource-bundle>messages.MyMessageBundle</resource-bundle>
 
