@@ -31,7 +31,7 @@ class MicroTaskSettingsService : PersistentStateComponent<MicroTaskSettingsServi
         var artifactBaseUrl: String = ""
 
         var accountId: String = ""
-        var sdkCoordinates: String = ""
+        var sdkCoordinates: String = "io.github.verevka8:sdk:1.0.0"
         var sdkRepositoryUrl: String = ""
         var projectBinding: String = ""
         var selectedArtifactId: String = ""

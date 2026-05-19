@@ -123,18 +123,18 @@ class MicroTaskSettingsConfigurable : Configurable {
                 }
             }
 
-            group("Future SDK (optional)") {
+            group("MinionFlow SDK") {
                 row("Coordinates") {
                     textField()
                         .bindText(model::sdkCoordinates)
                         .align(AlignX.FILL)
-                        .comment("Leave empty for now. Fill later if your own SDK dependency appears.")
+                        .comment("Maven coordinates of the SDK to add to generated projects. Default: io.github.verevka8:sdk:1.0.0 (Maven Central).")
                 }
                 row("Repository URL") {
                     textField()
                         .bindText(model::sdkRepositoryUrl)
                         .align(AlignX.FILL)
-                        .comment("Optional custom Maven repo for the future SDK")
+                        .comment("Optional custom Maven repo. Leave empty for Maven Central.")
                 }
             }
         }
